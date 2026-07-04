@@ -112,6 +112,7 @@ from lightrag.parser.routing import (
     parse_process_options,
     resolve_chunk_options,
     resolve_parser_directives,
+    validate_process_options,
 )
 from lightrag.utils import (
     generate_track_id,
@@ -823,6 +824,10 @@ class InsertTextRequest(BaseModel):
         default=None,
         description="Chunking strategy and params; omit for default fixed-token chunking",
     )
+    process_options: Optional[str] = Field(
+        default=None,
+        description="LightRAG processing options, for example '!' to skip knowledge graph extraction.",
+    )
 
     @field_validator("text", mode="after")
     @classmethod
@@ -842,6 +847,16 @@ class InsertTextRequest(BaseModel):
         # listable and deletable.
         reject_unsafe_document_source(file_source)
         return normalize_file_path(file_source)
+
+    @field_validator("process_options", mode="after")
+    @classmethod
+    def validate_process_options_after(cls, process_options: Optional[str]) -> Optional[str]:
+        if process_options is None:
+            return None
+        errors = validate_process_options(process_options)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return process_options
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -881,6 +896,10 @@ class InsertTextsRequest(BaseModel):
         default=None,
         description="Shared chunking strategy and params for all texts; omit for default fixed-token chunking",
     )
+    process_options: Optional[str] = Field(
+        default=None,
+        description="LightRAG processing options for all texts, for example '!' to skip knowledge graph extraction.",
+    )
 
     @field_validator("texts", mode="after")
     @classmethod
@@ -889,6 +908,16 @@ class InsertTextsRequest(BaseModel):
         if any(not text for text in stripped):
             raise ValueError("texts cannot contain empty or whitespace-only entries")
         return stripped
+
+    @field_validator("process_options", mode="after")
+    @classmethod
+    def validate_process_options_after(cls, process_options: Optional[str]) -> Optional[str]:
+        if process_options is None:
+            return None
+        errors = validate_process_options(process_options)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return process_options
 
     @field_validator("file_sources", mode="before")
     @classmethod
@@ -2589,7 +2618,9 @@ def _validate_custom_chunking_available(process_options: str, rag: LightRAG) -> 
 
 
 def _resolve_text_chunking(
-    chunking: Optional[TextChunkingConfig], rag: LightRAG
+    chunking: Optional[TextChunkingConfig],
+    rag: LightRAG,
+    process_options: Optional[str] = None,
 ) -> tuple[str, dict]:
     """Freeze a ``chunking`` request into ``(process_options, chunk_options)``.
 
@@ -2614,6 +2645,14 @@ def _resolve_text_chunking(
             this synchronously so the failure surfaces as HTTP 422 before any
             background work is scheduled.
     """
+    if process_options is not None and chunking is not None:
+        raise ValueError("process_options and chunking cannot both be set")
+
+    if process_options is not None:
+        return process_options, resolve_chunk_options(
+            rag.addon_params, process_options=process_options
+        )
+
     if chunking is None:
         # No request-driven config: reproduce today's behavior verbatim,
         # including not introducing new validation on the default path.
@@ -2712,6 +2751,7 @@ async def pipeline_index_texts(
     file_sources: List[str] = None,
     track_id: str = None,
     chunking: Optional[TextChunkingConfig] = None,
+    process_options: Optional[str] = None,
     resolved_chunking: Optional[tuple[str, dict]] = None,
     admission_token: str | None = None,
 ):
@@ -2724,6 +2764,9 @@ async def pipeline_index_texts(
         track_id: Optional tracking ID
         chunking: Optional chunking strategy + params (already validated by
             the request model); when None, default fixed-token chunking is used
+        process_options: Optional raw LightRAG process options. It is mutually
+            exclusive with chunking and is resolved only when no preflight
+            snapshot was supplied.
         resolved_chunking: Optional preflight-frozen ``(process_options,
             chunk_options)`` snapshot. Request handlers pass this so accepted
             work cannot be invalidated by a callback/config change before its
@@ -2745,7 +2788,11 @@ async def pipeline_index_texts(
         raise ValueError("File sources must be unique by filename")
 
     if resolved_chunking is None:
-        process_options, chunk_options = _resolve_text_chunking(chunking, rag)
+        process_options, chunk_options = _resolve_text_chunking(
+            chunking,
+            rag,
+            process_options,
+        )
     else:
         process_options, chunk_options = resolved_chunking
     enqueue_kwargs: dict[str, Any] = {
@@ -5526,7 +5573,11 @@ def create_document_routes(
             # change before the managed task starts, but an accepted request
             # must enqueue the exact options that passed this preflight.
             try:
-                resolved_chunking = _resolve_text_chunking(request.chunking, rag)
+                resolved_chunking = _resolve_text_chunking(
+                    request.chunking,
+                    rag,
+                    request.process_options,
+                )
             except ValueError as exc:
                 # Controlled chunking-config validation message (numeric sizes
                 # only, no internal detail); kept as client-facing 422 feedback
@@ -5683,7 +5734,11 @@ def create_document_routes(
             # callback/config may change before the managed task starts, but an
             # accepted request must enqueue the exact options from preflight.
             try:
-                resolved_chunking = _resolve_text_chunking(request.chunking, rag)
+                resolved_chunking = _resolve_text_chunking(
+                    request.chunking,
+                    rag,
+                    request.process_options,
+                )
             except ValueError as exc:
                 # Controlled chunking-config validation message (numeric sizes
                 # only, no internal detail); kept as client-facing 422 feedback
