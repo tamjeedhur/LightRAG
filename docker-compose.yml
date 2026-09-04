@@ -1,11 +1,9 @@
 services:
   lightrag:
-    image: ghcr.io/hkuds/lightrag:latest
+    image: qwryai/lightrag:custom
     build:
       context: .
       dockerfile: Dockerfile
-      tags:
-        - ghcr.io/hkuds/lightrag:latest
     ports:
       - "${HOST:-0.0.0.0}:${PORT:-9621}:9621"
     volumes:
