@@ -5147,6 +5147,7 @@ async def _get_vector_context(
                 "source_type": "vector",  # Mark the source type
                 "chunk_id": result.get("id"),  # Add chunk_id for deduplication
                 "full_doc_id": result.get("full_doc_id"),
+                "score": result.get("distance"),
             }
             valid_chunks.append(chunk_with_metadata)
 

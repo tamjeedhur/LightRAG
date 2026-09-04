@@ -173,6 +173,7 @@ async def test_document_scope_is_parameterized_before_top_k(mock_client_manager,
         assert params[0] == storage.workspace
         assert params[4] == document_ids
         assert "published-1" not in sql
+        assert "AS distance" in sql
 
 
 @pytest.mark.asyncio

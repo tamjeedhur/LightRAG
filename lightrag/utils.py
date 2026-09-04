@@ -6944,6 +6944,11 @@ def convert_to_user_format(
             "file_path": chunk.get("file_path", "unknown_source"),
             "chunk_id": chunk.get("chunk_id", ""),
             "full_doc_id": chunk.get("full_doc_id"),
+            "score": (
+                chunk["rerank_score"]
+                if chunk.get("rerank_score") is not None
+                else chunk.get("score")
+            ),
         }
         formatted_chunks.append(chunk_data)
 

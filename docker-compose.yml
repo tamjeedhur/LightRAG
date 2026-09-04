@@ -32,6 +32,12 @@ services:
       # so the exposed server is authenticated — without it every endpoint is public.
       HOST: "0.0.0.0"
       PORT: "9621"
+      LIGHTRAG_VECTOR_STORAGE: "PGVectorStorage"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:?POSTGRES_DATABASE is required}
       # Loads user-defined UI content from the read-only bundle mounted above.
       # Inert until ./data/ui_templates holds a bundle: with no manifest.json
       # in it the server logs a warning and keeps the built-in LightRAG

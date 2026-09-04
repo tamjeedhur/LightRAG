@@ -9898,6 +9898,7 @@ SQL_TEMPLATES = {
                      full_doc_id,
                      content,
                      file_path,
+                     1 - (content_vector <=> $4::{vector_cast}) AS distance,
                      EXTRACT(EPOCH FROM create_time)::BIGINT AS created_at
               FROM {table_name}
               WHERE workspace = $1

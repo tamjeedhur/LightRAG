@@ -55,14 +55,29 @@ async def test_naive_vector_context_applies_scope_and_keeps_document_identity(id
 
     storage = SimpleNamespace(
         cosine_better_than_threshold=0.1,
-        query=AsyncMock(return_value=[] if not ids else [{"id": "chunk-a", "full_doc_id": "doc-a", "content": "policy", "file_path": "cb-a"}]),
+        query=AsyncMock(return_value=[] if not ids else [{"id": "chunk-a", "full_doc_id": "doc-a", "content": "policy", "file_path": "cb-a", "distance": 0.91}]),
     )
     result = await _get_vector_context("policy", storage, QueryParam(mode="naive", document_ids=ids), None)
     assert storage.query.await_args.kwargs["document_ids"] == ids
     if ids:
         assert result[0]["full_doc_id"] == "doc-a"
+        assert result[0]["score"] == 0.91
     else:
         assert result == []
+
+
+def test_query_data_keeps_effective_retrieval_score():
+    from lightrag.utils import convert_to_user_format
+
+    response = convert_to_user_format(
+        [],
+        [],
+        [{"chunk_id": "chunk-a", "full_doc_id": "doc-a", "content": "policy", "file_path": "cb-a", "score": 0.61, "rerank_score": 0.93}],
+        [],
+        "naive",
+    )
+
+    assert response["data"]["chunks"][0]["score"] == 0.93
 
 
 @pytest.mark.parametrize("record", [None, {"status": "failed", "file_path": "cb-a"}, {"status": "processed", "file_path": "cb-a", "chunks_count": 7}])
