@@ -34,6 +34,16 @@ def make_resources(workspace: str) -> WorkspaceResources:
 
 
 @pytest.mark.asyncio
+async def test_default_workspace_is_available_before_lifespan_start():
+    default = make_resources("default")
+    registry = WorkspaceRegistry("default", default, make_resources)
+
+    assert await registry.get("default") is default
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await registry.get("tenant_chatbot")
+
+
+@pytest.mark.asyncio
 async def test_registry_lazily_initializes_each_workspace_once():
     default = make_resources("default")
     created: list[str] = []

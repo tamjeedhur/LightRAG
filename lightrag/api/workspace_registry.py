@@ -69,12 +69,13 @@ class WorkspaceRegistry:
     async def get(self, workspace: str) -> WorkspaceResources:
         if self._closing:
             raise RuntimeError("LightRAG workspace registry is shutting down")
-        if not self._started:
-            raise RuntimeError("LightRAG workspace registry is not initialized")
 
         existing = self._resources.get(workspace)
         if existing is not None:
             return existing
+
+        if not self._started:
+            raise RuntimeError("LightRAG workspace registry is not initialized")
 
         async with self._lock:
             existing = self._resources.get(workspace)
