@@ -526,6 +526,21 @@ Official LightRAG Docker images are fully compatible with offline or air-gapped 
 
 ### Starting Multiple LightRAG Instances
 
+For tenant-style dynamic workspaces, one API server can serve multiple isolated
+workspaces. Send `LIGHTRAG-WORKSPACE: <workspace>` with an authenticated API
+request. The server validates the name and lazily initializes a separate
+LightRAG storage resource set and input directory for it. Concurrent first
+requests for the same workspace share one initialization, and initialized
+workspaces are finalized during server shutdown. This removes the need to add a
+new process, port, or environment entry for every tenant.
+
+The header must contain only ASCII letters, numbers, and underscores (maximum
+128 characters). When `LIGHTRAG_API_KEY` is configured, dynamic workspace
+allocation also requires the matching `X-API-Key` header.
+
+Dedicated instances remain useful when workspaces require different provider,
+model, or storage configuration:
+
 There are two ways to start multiple LightRAG instances. The first way is to configure a completely independent working environment for each instance. This requires creating a separate working directory for each instance and placing a dedicated `.env` configuration file in that directory. The server listening ports in the configuration files of different instances cannot be the same. Then, you can start the service by running `lightrag-server` in the working directory.
 
 The second way is for all instances to share the same set of `.env` configuration files, and then use command-line arguments to specify different server listening ports and workspaces for each instance. You can start multiple LightRAG instances in the same working directory with different command-line arguments. For example:

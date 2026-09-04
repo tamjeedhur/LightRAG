@@ -119,6 +119,9 @@ class QueryParam:
     If None, defaults to top_k value.
     """
 
+    document_ids: list[str] | None = None
+    """Published document allowlist for naive retrieval. Empty means no documents."""
+
     max_entity_tokens: int = get_env_value(
         "MAX_ENTITY_TOKENS", DEFAULT_MAX_ENTITY_TOKENS, int
     )

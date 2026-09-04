@@ -1,0 +1,4 @@
+FROM ghcr.io/hkuds/lightrag:latest
+USER root
+RUN python -m pip install --no-cache-dir pytest pytest-asyncio pytest-subtests
+COPY lightrag/ /app/lightrag/

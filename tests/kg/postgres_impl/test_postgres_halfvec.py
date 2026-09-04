@@ -151,6 +151,31 @@ QUERY_NAMESPACES = [
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("document_ids", [[], ["published-1"], ["published-1", "published-2"]])
+async def test_document_scope_is_parameterized_before_top_k(mock_client_manager, mock_pg_db, mock_embedding_func, document_ids):
+    mock_pg_db.check_table_exists = AsyncMock(return_value=True)
+    storage = PGVectorStorage(
+        namespace=NameSpace.VECTOR_STORE_CHUNKS,
+        global_config={"embedding_batch_num": 10, "vector_db_storage_cls_kwargs": {"cosine_better_than_threshold": 0.8}},
+        embedding_func=mock_embedding_func, workspace="tenant_bot",
+    )
+    await storage.initialize()
+    mock_pg_db.query.reset_mock()
+    result = await storage.query("policy", 5, query_embedding=[0.1] * 768, document_ids=document_ids)
+    if not document_ids:
+        assert result == []
+        mock_pg_db.query.assert_not_called()
+    else:
+        sql = mock_pg_db.query.call_args.args[0]
+        params = mock_pg_db.query.call_args.kwargs["params"]
+        assert "full_doc_id = ANY($5::text[])" in sql
+        assert sql.index("full_doc_id = ANY") < sql.index("LIMIT")
+        assert params[0] == storage.workspace
+        assert params[4] == document_ids
+        assert "published-1" not in sql
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("namespace", QUERY_NAMESPACES)
 async def test_query_uses_halfvec_cast_when_hnsw_halfvec(
     mock_client_manager, mock_pg_db, mock_embedding_func, namespace

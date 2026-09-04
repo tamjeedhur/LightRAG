@@ -28,6 +28,14 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class QueryRequest(BaseModel):
+    document_ids: Optional[List[str]] = Field(default=None, description="Restrict naive retrieval to these published document IDs before top-k selection.")
+
+    @model_validator(mode="after")
+    def validate_document_scope(self):
+        if self.document_ids is not None and self.mode != "naive":
+            raise ValueError("document_ids requires naive mode")
+        return self
+
     query: str = Field(
         max_length=MAX_QUERY_CHARS,
         description=(

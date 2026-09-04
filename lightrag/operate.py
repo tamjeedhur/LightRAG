@@ -5120,8 +5120,16 @@ async def _get_vector_context(
     search_top_k = query_param.chunk_top_k or query_param.top_k
     cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
+    scope = (
+        {"document_ids": query_param.document_ids}
+        if query_param.document_ids is not None
+        else {}
+    )
     results = await chunks_vdb.query(
-        query, top_k=search_top_k, query_embedding=query_embedding
+        query,
+        top_k=search_top_k,
+        query_embedding=query_embedding,
+        **scope,
     )
     if not results:
         logger.info(
@@ -5138,6 +5146,7 @@ async def _get_vector_context(
                 "file_path": result.get("file_path", "unknown_source"),
                 "source_type": "vector",  # Mark the source type
                 "chunk_id": result.get("id"),  # Add chunk_id for deduplication
+                "full_doc_id": result.get("full_doc_id"),
             }
             valid_chunks.append(chunk_with_metadata)
 
@@ -6813,6 +6822,7 @@ async def naive_query(
         # split the cache between two requests that build identical prompts.
         effective_user_prompt.text,
         query_param.enable_rerank,
+        query_param.document_ids,
         global_config.get("enable_content_headings", False),
         *(("\n<system_prompt>\n", system_prompt) if system_prompt else ()),
         "\n<llm_identity>\n",
@@ -6844,6 +6854,7 @@ async def naive_query(
             queryparam_dict = {
                 "answer_cache_version": _ANSWER_CACHE_POLICY_VERSION,
                 "mode": query_param.mode,
+                "document_ids": query_param.document_ids,
                 "response_type": query_param.response_type,
                 "top_k": query_param.top_k,
                 "chunk_top_k": query_param.chunk_top_k,

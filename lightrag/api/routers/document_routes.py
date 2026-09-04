@@ -6399,6 +6399,13 @@ def create_document_routes(
             logger.error(traceback.format_exc())
             raise internal_server_error(e)
 
+    @router.get("/status/{doc_id}", dependencies=[Depends(combined_auth)])
+    async def get_document_status(doc_id: str):
+        document = await rag.doc_status.get_by_id(doc_id)
+        if document is None:
+            return None
+        return {"id": doc_id, **document}
+
     @router.get(
         "/track_status/{track_id}",
         response_model=TrackStatusResponse,

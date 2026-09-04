@@ -4867,8 +4867,13 @@ class PGVectorStorage(BaseVectorStorage):
 
     #################### query method ###############
     async def query(
-        self, query: str, top_k: int, query_embedding: list[float] = None
+        self, query: str, top_k: int, query_embedding: list[float] = None,
+        document_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        if document_ids is not None and self.namespace != "chunks":
+            raise ValueError("Document filtering is supported only for chunk vectors")
+        if document_ids == []:
+            return []
         if query_embedding is not None:
             embedding = query_embedding
         else:
@@ -4894,6 +4899,9 @@ class PGVectorStorage(BaseVectorStorage):
             "top_k": top_k,
             "embedding": embedding,
         }
+        if document_ids is not None:
+            sql = sql.replace("WHERE workspace = $1", "WHERE workspace = $1 AND full_doc_id = ANY($5::text[])")
+            params["document_ids"] = document_ids
         results = await self.db.query(sql, params=list(params.values()), multirows=True)
         return results
 
@@ -9887,6 +9895,7 @@ SQL_TEMPLATES = {
                 """,
     "chunks": """
               SELECT id,
+                     full_doc_id,
                      content,
                      file_path,
                      EXTRACT(EPOCH FROM create_time)::BIGINT AS created_at

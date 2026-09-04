@@ -4117,6 +4117,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         # Create a copy of param to avoid modifying the original
         data_param = QueryParam(
             mode=param.mode,
+            document_ids=param.document_ids,
             only_need_context=True,  # Skip LLM generation, only get context and data
             only_need_prompt=False,
             response_type=param.response_type,

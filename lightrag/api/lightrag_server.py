@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import logging
 import logging.config
 import sys
@@ -76,6 +77,11 @@ from lightrag.api.ui_customization import (
     WEBUI_CHROME_LOCALES,
     locales_without_chrome_translation,
     resolve_ui_customization_snapshot,
+)
+from lightrag.api.workspace_registry import (
+    WorkspaceRegistry,
+    WorkspaceResourceProxy,
+    WorkspaceResources,
 )
 
 from lightrag.utils import logger, set_verbose_debug
@@ -1580,9 +1586,6 @@ def create_app(args):
     # Check if API key is provided either through env var or args
     api_key = os.getenv("LIGHTRAG_API_KEY") or args.key
 
-    # Initialize document manager with workspace support for data isolation
-    doc_manager = DocumentManager(args.input_dir, workspace=args.workspace)
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Lifespan context manager for startup and shutdown events"""
@@ -1590,12 +1593,9 @@ def create_app(args):
         app.state.background_tasks = set()
 
         try:
-            # Initialize database connections
-            # Note: initialize_storages() now auto-initializes pipeline_status for rag.workspace
-            await rag.initialize_storages()
-
-            # Data migration regardless of storage implementation
-            await rag.check_and_migrate_data()
+            # Initialize the default workspace. Header-selected workspaces are
+            # initialized lazily on their first authenticated request.
+            await workspace_registry.start()
 
             # Admission control needs a doc_status backend that can count
             # strictly (LR2 §9.1). Probe once here so an unsupported backend
@@ -1630,8 +1630,8 @@ def create_app(args):
                 app.state.background_tasks
             )
 
-            # Clean up database connections
-            await rag.finalize_storages()
+            # Clean up every workspace initialized by this process.
+            await workspace_registry.close()
 
             if "LIGHTRAG_GUNICORN_MODE" not in os.environ:
                 # Only perform cleanup in Uvicorn single-process mode
@@ -1824,18 +1824,7 @@ def create_app(args):
         # Check custom header first
         workspace = request.headers.get("LIGHTRAG-WORKSPACE", "").strip()
 
-        if not workspace:
-            workspace = None
-        else:
-            sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", workspace)
-            if sanitized != workspace:
-                logger.warning(
-                    f"Workspace header '{workspace}' contains invalid characters. "
-                    f"Sanitized to '{sanitized}'."
-                )
-                workspace = sanitized
-
-        return workspace
+        return workspace or None
 
     # Create working directory if it doesn't exist
     Path(args.working_dir).mkdir(parents=True, exist_ok=True)
@@ -2454,85 +2443,144 @@ def create_app(args):
         for spec in ROLES
     }
 
-    # Initialize RAG with unified configuration
-    try:
-        rag = LightRAG(
-            working_dir=args.working_dir,
-            workspace=args.workspace,
-            llm_model_func=create_llm_model_func(args.llm_binding),
-            llm_model_name=args.llm_model,
-            llm_model_max_async=args.max_async,
-            summary_max_tokens=args.summary_max_tokens,
-            summary_context_size=args.summary_context_size,
-            chunk_token_size=int(args.chunk_size),
-            chunk_overlap_token_size=int(args.chunk_overlap_size),
-            embedding_chunk_overlap_token_size=int(
-                args.embedding_chunk_overlap_token_size
-            ),
-            llm_model_kwargs=_create_llm_model_kwargs(
-                args.llm_binding, args, llm_timeout
-            ),
-            embedding_func=embedding_func,
-            default_llm_timeout=llm_timeout,
-            default_embedding_timeout=embedding_timeout,
-            kv_storage=args.kv_storage,
-            graph_storage=args.graph_storage,
-            vector_storage=args.vector_storage,
-            doc_status_storage=args.doc_status_storage,
-            vector_db_storage_cls_kwargs={
-                "cosine_better_than_threshold": args.cosine_threshold
-            },
-            enable_llm_cache_for_entity_extract=args.enable_llm_cache_for_extract,
-            enable_llm_cache=args.enable_llm_cache,
-            vlm_process_enable=args.vlm_process_enable,
-            rerank_model_func=rerank_model_func,
-            rerank_model_max_async=args.rerank_max_async,
-            default_rerank_timeout=args.rerank_timeout,
-            max_parallel_insert=args.max_parallel_insert,
-            pipeline_scheduling_page_size=args.pipeline_scheduling_page_size,
-            pipeline_require_strict_storage_reads=args.pipeline_require_strict_storage_reads,
-            max_pending_documents=args.max_pending_documents,
-            max_graph_nodes=args.max_graph_nodes,
-            addon_params=addon_params,
-            ollama_server_infos=ollama_server_infos,
-            role_llm_configs={
-                spec.name: RoleLLMConfig(
-                    func=role_llm_configs[spec.name]["func"],
-                    kwargs=role_llm_configs[spec.name]["kwargs"],
-                    max_async=role_llm_configs[spec.name]["max_async"],
-                    timeout=role_llm_configs[spec.name]["timeout"],
-                    metadata={
-                        "base_binding": args.llm_binding,
-                        "binding": role_llm_configs[spec.name]["binding"],
-                        "model": role_llm_configs[spec.name]["model"],
-                        "host": role_llm_configs[spec.name]["host"],
-                        "api_key": role_llm_configs[spec.name]["api_key"],
-                        "provider_options": role_llm_configs[spec.name][
-                            "provider_options"
-                        ],
-                        "bedrock_aws_options": role_llm_configs[spec.name][
-                            "bedrock_aws_options"
-                        ],
-                        "is_cross_provider": role_llm_configs[spec.name][
-                            "is_cross_provider"
-                        ],
-                    },
-                )
-                for spec in ROLES
-            },
-        )
-    except Exception as e:
-        logger.error(f"Failed to initialize LightRAG: {e}")
-        raise
+    def create_workspace_resources(workspace: str) -> WorkspaceResources:
+        """Build an uninitialized, isolated resource set for one workspace."""
+        try:
+            workspace_rag = LightRAG(
+                working_dir=args.working_dir,
+                workspace=workspace,
+                llm_model_func=create_llm_model_func(args.llm_binding),
+                llm_model_name=args.llm_model,
+                llm_model_max_async=args.max_async,
+                summary_max_tokens=args.summary_max_tokens,
+                summary_context_size=args.summary_context_size,
+                chunk_token_size=int(args.chunk_size),
+                chunk_overlap_token_size=int(args.chunk_overlap_size),
+                embedding_chunk_overlap_token_size=int(
+                    args.embedding_chunk_overlap_token_size
+                ),
+                llm_model_kwargs=_create_llm_model_kwargs(
+                    args.llm_binding, args, llm_timeout
+                ),
+                embedding_func=embedding_func,
+                default_llm_timeout=llm_timeout,
+                default_embedding_timeout=embedding_timeout,
+                kv_storage=args.kv_storage,
+                graph_storage=args.graph_storage,
+                vector_storage=args.vector_storage,
+                doc_status_storage=args.doc_status_storage,
+                vector_db_storage_cls_kwargs={
+                    "cosine_better_than_threshold": args.cosine_threshold
+                },
+                enable_llm_cache_for_entity_extract=args.enable_llm_cache_for_extract,
+                enable_llm_cache=args.enable_llm_cache,
+                vlm_process_enable=args.vlm_process_enable,
+                rerank_model_func=rerank_model_func,
+                rerank_model_max_async=args.rerank_max_async,
+                default_rerank_timeout=args.rerank_timeout,
+                max_parallel_insert=args.max_parallel_insert,
+                pipeline_scheduling_page_size=args.pipeline_scheduling_page_size,
+                pipeline_require_strict_storage_reads=args.pipeline_require_strict_storage_reads,
+                max_pending_documents=args.max_pending_documents,
+                max_graph_nodes=args.max_graph_nodes,
+                addon_params=addon_params,
+                ollama_server_infos=ollama_server_infos,
+                role_llm_configs={
+                    spec.name: RoleLLMConfig(
+                        func=role_llm_configs[spec.name]["func"],
+                        kwargs=role_llm_configs[spec.name]["kwargs"],
+                        max_async=role_llm_configs[spec.name]["max_async"],
+                        timeout=role_llm_configs[spec.name]["timeout"],
+                        metadata={
+                            "base_binding": args.llm_binding,
+                            "binding": role_llm_configs[spec.name]["binding"],
+                            "model": role_llm_configs[spec.name]["model"],
+                            "host": role_llm_configs[spec.name]["host"],
+                            "api_key": role_llm_configs[spec.name]["api_key"],
+                            "provider_options": role_llm_configs[spec.name][
+                                "provider_options"
+                            ],
+                            "bedrock_aws_options": role_llm_configs[spec.name][
+                                "bedrock_aws_options"
+                            ],
+                            "is_cross_provider": role_llm_configs[spec.name][
+                                "is_cross_provider"
+                            ],
+                        },
+                    )
+                    for spec in ROLES
+                },
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to construct LightRAG workspace '%s': %s", workspace, e
+            )
+            raise
 
-    _log_role_provider_options(rag)
-
-    rag.register_role_llm_builder(
-        lambda role, meta: (
-            create_role_llm_func(role, meta),
-            create_role_llm_model_kwargs(role, meta),
+        workspace_rag.register_role_llm_builder(
+            lambda role, meta: (
+                create_role_llm_func(role, meta),
+                create_role_llm_model_kwargs(role, meta),
+            )
         )
+        return WorkspaceResources(
+            rag=workspace_rag,
+            document_manager=DocumentManager(args.input_dir, workspace=workspace),
+        )
+
+    default_resources = create_workspace_resources(args.workspace)
+    _log_role_provider_options(default_resources.rag)
+    workspace_registry = WorkspaceRegistry(
+        args.workspace,
+        default_resources,
+        create_workspace_resources,
     )
+    rag = WorkspaceResourceProxy(default_resources.rag, "rag")
+    doc_manager = WorkspaceResourceProxy(
+        default_resources.document_manager,
+        "document_manager",
+    )
+
+    @app.middleware("http")
+    async def bind_request_workspace(request: Request, call_next):
+        requested_workspace = get_workspace_from_request(request)
+        workspace = (
+            args.workspace if requested_workspace is None else requested_workspace
+        )
+
+        if len(workspace) > 128 or not re.fullmatch(r"[A-Za-z0-9_]*", workspace):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid LIGHTRAG-WORKSPACE header"},
+            )
+
+        # Workspace allocation happens before route dependencies execute. When
+        # API-key auth is configured, require it here too so unauthenticated
+        # callers cannot allocate arbitrary workspace resources.
+        if workspace != args.workspace and api_key:
+            supplied_api_key = request.headers.get("X-API-Key", "")
+            if not secrets.compare_digest(supplied_api_key, api_key):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Unauthorized"},
+                )
+
+        try:
+            resources = await workspace_registry.get(workspace)
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize request workspace '%s': %s", workspace, exc
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "LightRAG workspace initialization failed"},
+            )
+
+        token = workspace_registry.bind(resources)
+        try:
+            return await call_next(request)
+        finally:
+            workspace_registry.reset(token)
 
     # Add routes
     # root_path is set on the app for reverse proxy support;

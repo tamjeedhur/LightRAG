@@ -1,3 +1,5 @@
+> Local datasource integration (1 September 2026): this checkout adds exact document-status lookup and PostgreSQL/naive publication-scoped retrieval. Deploy the patched provider with the matching backend; legacy publication migration is still required. The isolated test provider passes 29 automated tests and 20 live scope checks. See [contract, evidence and deployment limitations](/Users/macbook/Desktop/chatbot-project/Chatbot-BE/docs/DATA_SOURCE_PIPELINE_REPAIR_2026-09-01.md). `Dockerfile.datasource-tests` is for isolated tests, not a production image.
+
 <div align="center">
 
 <div style="margin: 20px 0;">
@@ -194,6 +196,15 @@ cp env.example .env  # Update the .env with your LLM and embedding configuration
 # modify LLM and Embedding settings in .env
 docker compose up
 ```
+
+#### Local pgvector storage
+
+The bundled `docker-compose.yml` also starts a local `pgvector/pgvector:pg18`
+database on `127.0.0.1:5432`. Set `LIGHTRAG_VECTOR_STORAGE=PGVectorStorage`
+and the `POSTGRES_*` values in `.env` before starting the stack. For embedding
+models with more than 2,000 dimensions, set
+`POSTGRES_VECTOR_INDEX_TYPE=HNSW_HALFVEC`. Changing the vector backend requires
+re-indexing existing documents because LightRAG does not migrate vector data.
 
 > Historical versions of LightRAG docker images can be found here: [LightRAG Docker Images]( https://github.com/HKUDS/LightRAG/pkgs/container/lightrag)
 >
