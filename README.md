@@ -1,4 +1,4 @@
-> Local datasource integration (1 September 2026): this checkout adds exact document-status lookup and PostgreSQL/naive publication-scoped retrieval. Deploy the patched provider with the matching backend; legacy publication migration is still required. The isolated test provider passes 29 automated tests and 20 live scope checks. See [contract, evidence and deployment limitations](/Users/macbook/Desktop/chatbot-project/Chatbot-BE/docs/DATA_SOURCE_PIPELINE_REPAIR_2026-09-01.md). `Dockerfile.datasource-tests` is for isolated tests, not a production image.
+> Qwry datasource integration: this fork adds authenticated dynamic workspaces, exact document-status lookup, and PostgreSQL publication-scoped naive retrieval. See the [multi-workspace API documentation](./docs/LightRAG-API-Server.md#starting-multiple-lightrag-instances). `Dockerfile.datasource-tests` is for isolated tests, not a production image.
 
 <div align="center">
 
